@@ -10,8 +10,9 @@ A CLI tool that submits your code to the coderpass repository and shows CI execu
 
 ## Installation
 
-Download Binary
+Download CLI binary
 
+Go to https://github.com/coderpass/cli/tree/main/bin
 
 Or install from NPM
 
