@@ -4,6 +4,7 @@ import { Command } from "commander";
 import simpleGit, { SimpleGit } from "simple-git";
 import chalk from "chalk";
 import { createSpinner } from "nanospinner";
+import { checkRemoteIsCoderPass, hasCiWorkflow } from "./utils";
 
 const program = new Command();
 
@@ -15,7 +16,6 @@ program.name("coderpass").description("CLI for coderpass").version("1.0.0");
 program
   .command("submit")
   .description("Submit code and run tests in CI")
-  .option("-v, --verbose", "Enable verbose logging")
   .action(async (options) => {
     console.log("Submitting code to repository and streaming logs...");
     try {
@@ -49,6 +49,7 @@ async function getGit() {
 }
 
 const streamLogs = async (commitHash: string) => {
+  console.log(`Connecting to log stream for submission ${commitHash}...`);
   let jobResult = null;
   const response = await fetch(`${LOGSTREAM_URL}/${commitHash}`, {
     method: "POST",
@@ -119,11 +120,6 @@ const streamLogs = async (commitHash: string) => {
   }
   spinner?.stop().clear();
 
-  // Full verbose logs
-  // for (const message of allMessages) {
-  //     console.log(message)
-  // }
-
   return jobResult;
 };
 
@@ -131,8 +127,17 @@ async function submit(options: any) {
   try {
     const git = await getGit();
 
-    if (options.verbose) {
-      console.log("Detected git repository");
+    // Check that the remote is pointing to git.coderpass.io
+    const remote = "origin";
+    const isValidRemote = await checkRemoteIsCoderPass(git, remote);
+    if (!isValidRemote) {
+      console.error(
+        chalk.red(
+          "CoderPass CLI should be run within a cloned challenge repository. \n\n" +
+            "Go to https://practice.coderpass.io/challenges to start a new challenge."
+        )
+      );
+      return;
     }
 
     // Get current branch if not specified
@@ -178,20 +183,19 @@ async function submit(options: any) {
 
     const commitHash = await git.revparse(["HEAD"]);
 
-    // Get the remote
-    const remote = "origin";
-
     // Force push to the remote with a fully qualified reference
     // Use fully qualified reference name to avoid Git errors
-    const pushResult = await git.push(remote, `HEAD:refs/heads/${branch}`, [
-      "--force",
-    ]);
+    await git.push(remote, `HEAD:refs/heads/${branch}`, ["--force"]);
 
-    if (options.verbose && pushResult) {
-      console.log(pushResult);
+    const ciWorkflowExists = await hasCiWorkflow(git);
+    if (!ciWorkflowExists) {
+      console.log(
+        chalk.green(
+          "This challenge does not have a CI workflow configured, so no tests will be run in CI. \n\n" +
+            "See README.md on how to run and test your code locally."
+        )
+      );
     }
-
-    console.log(`Connecting to log stream for commit ${commitHash}...`);
 
     await streamLogs(commitHash);
   } catch (error) {
