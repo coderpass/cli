@@ -16,6 +16,15 @@ const LOGSTREAM_URL = "https://api.coderpass.io/api/test/logstream";
 
 program.name("coderpass").description("CLI for coderpass").version("1.0.0");
 
+const GENERIC_ERROR_MESSAGE =
+  "Something went wrong. Please try again. \n\n" +
+  "Contact us at https://practice.coderpass.io/contact if the issue persists.";
+
+const NOT_A_CODERPASS_REPOSITORY_ERROR_MESSAGE =
+  "CoderPass CLI should be run inside a cloned CoderPass challenge repository. \n\n" +
+  "Ensure you are in a cloned challenge repository and try again. \n\n" +
+  "Or go to https://practice.coderpass.io/challenges to start a new challenge. \n\n";
+
 // Submit command - push to repository and stream logs
 program
   .command("submit")
@@ -29,7 +38,7 @@ program
         message: "Auto-submit from CLI",
       });
     } catch (error) {
-      console.error("Error:", error);
+      console.error(GENERIC_ERROR_MESSAGE + "\n\n" + "Error:", error);
       process.exit(1);
     }
   });
@@ -46,9 +55,18 @@ async function getGit() {
   // Check if we're in a git repository
   const isRepo = await git.checkIsRepo();
   if (!isRepo) {
-    console.error("Error: Not a git repository");
+    console.error(chalk.red(NOT_A_CODERPASS_REPOSITORY_ERROR_MESSAGE));
     process.exit(1);
   }
+  const remotes = await git.getRemotes(true);
+  const originRemote = remotes.find((r) => r.name === "origin");
+  const remoteUrl = originRemote?.refs?.push || originRemote?.refs?.fetch;
+
+  if (!remoteUrl?.includes("git.coderpass.io")) {
+    console.error(chalk.red(NOT_A_CODERPASS_REPOSITORY_ERROR_MESSAGE));
+    process.exit(1);
+  }
+
   return git;
 }
 
@@ -114,11 +132,7 @@ const streamLogs = async (commitHash: string) => {
 
   if (!testRan) {
     spinner?.error();
-    console.log(
-      chalk.red(
-        "No tests ran, something went wrong, please contact admin@coderpass.io"
-      )
-    );
+    console.log(chalk.red("No tests ran, " + GENERIC_ERROR_MESSAGE));
   } else {
     spinner?.success();
   }
@@ -130,19 +144,6 @@ const streamLogs = async (commitHash: string) => {
 async function submit(options: any) {
   try {
     const git = await getGit();
-
-    // Check that the remote is pointing to git.coderpass.io
-    const remote = "origin";
-    const isValidRemote = await checkRemoteIsCoderPass(git, remote);
-    if (!isValidRemote) {
-      console.error(
-        chalk.red(
-          "CoderPass CLI should be run within a cloned challenge repository. \n\n" +
-            "Go to https://practice.coderpass.io/challenges to start a new challenge."
-        )
-      );
-      return;
-    }
 
     // Block if workflow files are being changed in this working tree
     if (await hasWorkflowChanges(git)) {
@@ -200,7 +201,7 @@ async function submit(options: any) {
 
     // Force push to the remote with a fully qualified reference
     // Use fully qualified reference name to avoid Git errors
-    await git.push(remote, `HEAD:refs/heads/${branch}`, ["--force"]);
+    await git.push("remote", `HEAD:refs/heads/${branch}`, ["--force"]);
 
     const ciWorkflowExists = await hasCiWorkflow(git);
     if (!ciWorkflowExists) {
@@ -214,7 +215,7 @@ async function submit(options: any) {
 
     await streamLogs(commitHash);
   } catch (error) {
-    console.error("Error:", error);
+    console.error(GENERIC_ERROR_MESSAGE + "\n\n" + "Error:", error);
     throw error;
   }
 }
