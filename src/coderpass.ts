@@ -4,11 +4,7 @@ import { Command } from "commander";
 import simpleGit, { SimpleGit } from "simple-git";
 import chalk from "chalk";
 import { createSpinner } from "nanospinner";
-import {
-  checkRemoteIsCoderPass,
-  hasCiWorkflow,
-  hasWorkflowChanges,
-} from "./utils";
+import { hasCiWorkflow, hasWorkflowChanges } from "./utils";
 
 const program = new Command();
 
@@ -17,20 +13,32 @@ const LOGSTREAM_URL = "https://api.coderpass.io/api/test/logstream";
 program.name("coderpass").description("CLI for coderpass").version("1.0.0");
 
 const GENERIC_ERROR_MESSAGE =
-  "Something went wrong. Please try again. \n\n" +
-  "Contact us at https://practice.coderpass.io/contact if the issue persists.";
+  chalk.red.bold("❌ Error: ") +
+  "Something went wrong. Please try again.\n" +
+  chalk.gray(
+    "Contact us at https://practice.coderpass.io/contact if the issue persists."
+  );
 
 const NOT_A_CODERPASS_REPOSITORY_ERROR_MESSAGE =
-  "CoderPass CLI should be run inside a cloned CoderPass challenge repository. \n\n" +
-  "Ensure you are in a cloned challenge repository and try again. \n\n" +
-  "Or go to https://practice.coderpass.io/challenges to start a new challenge. \n\n";
+  chalk.red.bold("❌ Error: ") +
+  "CoderPass CLI should be run inside a cloned CoderPass challenge repository.\n\n" +
+  chalk.yellow(
+    "• Ensure you are in a cloned challenge repository and try again.\n"
+  ) +
+  chalk.yellow("• Or go to ") +
+  chalk.cyan.underline("https://practice.coderpass.io/challenges") +
+  chalk.yellow(" to start a new challenge.");
 
 // Submit command - push to repository and stream logs
 program
   .command("submit")
   .description("Submit code and run tests in CI")
   .action(async (options) => {
-    console.log("Submitting code to repository and streaming logs...");
+    const submitMsg = `${chalk.cyan.bold(
+      "\n🚀 Submitting code to CoderPass...\n"
+    )}
+${chalk.gray("Streaming logs and running tests in CI.")}`;
+    console.log(submitMsg);
     try {
       await submit({
         ...options,
@@ -38,7 +46,10 @@ program
         message: "Auto-submit from CLI",
       });
     } catch (error) {
-      console.error(GENERIC_ERROR_MESSAGE + "\n\n" + "Error:", error);
+      console.error("\n" + GENERIC_ERROR_MESSAGE);
+      if (error instanceof Error) {
+        console.error(chalk.gray(`\nDetails: ${error.message}`));
+      }
       process.exit(1);
     }
   });
@@ -46,24 +57,23 @@ program
 program.parse(process.argv);
 
 async function getGit() {
-  const cwd = process.cwd();
-  console.log(`Working in directory: ${cwd}`);
-
   // Initialize git in the current directory
-  const git: SimpleGit = simpleGit(cwd);
+  const git: SimpleGit = simpleGit(process.cwd());
 
   // Check if we're in a git repository
   const isRepo = await git.checkIsRepo();
   if (!isRepo) {
-    console.error(chalk.red(NOT_A_CODERPASS_REPOSITORY_ERROR_MESSAGE));
+    console.error("\n" + NOT_A_CODERPASS_REPOSITORY_ERROR_MESSAGE + "\n");
     process.exit(1);
   }
+
+  // Check that the remote is pointing to git.coderpass.io
   const remotes = await git.getRemotes(true);
   const originRemote = remotes.find((r) => r.name === "origin");
   const remoteUrl = originRemote?.refs?.push || originRemote?.refs?.fetch;
 
   if (!remoteUrl?.includes("git.coderpass.io")) {
-    console.error(chalk.red(NOT_A_CODERPASS_REPOSITORY_ERROR_MESSAGE));
+    console.error("\n" + NOT_A_CODERPASS_REPOSITORY_ERROR_MESSAGE + "\n");
     process.exit(1);
   }
 
@@ -71,7 +81,11 @@ async function getGit() {
 }
 
 const streamLogs = async (commitHash: string) => {
-  console.log(`Connecting to log stream for submission ${commitHash}...`);
+  console.log();
+  const short = commitHash.substring(0, 7);
+  const connectSpinner = createSpinner(
+    `Connecting to test logs stream for commit ${short}...`
+  ).start();
   let jobResult = null;
   const response = await fetch(`${LOGSTREAM_URL}/${commitHash}`, {
     method: "POST",
@@ -83,11 +97,19 @@ const streamLogs = async (commitHash: string) => {
     ?.pipeThrough(new TextDecoderStream())
     .getReader();
 
+  if (reader) {
+    connectSpinner.stop();
+  } else {
+    connectSpinner.error();
+    return jobResult;
+  }
+
   let currentStep: string | null = null;
   let testRan = false;
   let allMessages = [];
   let spinner = null;
   let seenStepsIDs = new Set();
+  let seenCheckoutRepositoryStep = false;
 
   while (reader) {
     const { value, done } = await reader.read();
@@ -116,6 +138,15 @@ const streamLogs = async (commitHash: string) => {
       currentStep = null;
     }
 
+    // This step is happening twice, once at the beginning and once at the end.
+    // We only want to show it once.
+    if (currentStep === "Checkout repository") {
+      if (seenCheckoutRepositoryStep) {
+        currentStep = "Finishing";
+      }
+      seenCheckoutRepositoryStep = true;
+    }
+
     if (currentStep && !seenStepsIDs.has(stepID)) {
       seenStepsIDs.add(stepID);
       spinner?.success();
@@ -132,7 +163,7 @@ const streamLogs = async (commitHash: string) => {
 
   if (!testRan) {
     spinner?.error();
-    console.log(chalk.red("No tests ran, " + GENERIC_ERROR_MESSAGE));
+    console.log("\n" + GENERIC_ERROR_MESSAGE);
   } else {
     spinner?.success();
   }
@@ -148,10 +179,11 @@ async function submit(options: any) {
     // Block if workflow files are being changed in this working tree
     if (await hasWorkflowChanges(git)) {
       console.error(
-        chalk.red(
-          "Submission blocked: changes to CI workflow files are not allowed.\n" +
-            "Please revert edits in .github/workflows and try again."
-        )
+        chalk.red.bold("\n❌ Submission blocked: ") +
+          chalk.red("Changes to CI workflow files are not allowed.\n") +
+          chalk.yellow("Please revert edits in ") +
+          chalk.cyan(".github/workflows") +
+          chalk.yellow(" and try again.\n")
       );
       return;
     }
@@ -167,10 +199,11 @@ async function submit(options: any) {
         // If in detached HEAD state, use a default branch name
         branch = "main";
         console.log(
-          `Detected detached HEAD state. Using default branch name: ${branch}`
+          chalk.yellow(`⚠️  Detected detached HEAD state. Using branch: `) +
+            chalk.cyan.bold(branch)
         );
       } else {
-        console.error(`Debug: Current branch: ${branch}`);
+        console.log(chalk.gray(`Branch: `) + chalk.cyan.bold(branch));
       }
     }
 
@@ -201,21 +234,29 @@ async function submit(options: any) {
 
     // Force push to the remote with a fully qualified reference
     // Use fully qualified reference name to avoid Git errors
-    await git.push("remote", `HEAD:refs/heads/${branch}`, ["--force"]);
+    await git.push("origin", `HEAD:refs/heads/${branch}`, ["--force"]);
 
     const ciWorkflowExists = await hasCiWorkflow(git);
     if (!ciWorkflowExists) {
       console.log(
-        chalk.green(
-          "This challenge does not have a CI workflow configured, so no tests will be run in CI. \n\n" +
-            "See README.md on how to run and test your code locally."
-        )
+        chalk.green.bold("\n✅ Code submitted successfully!\n\n") +
+          chalk.yellow(
+            "ℹ️  This challenge does not have a CI workflow configured.\n"
+          ) +
+          chalk.yellow("   No tests will be run in CI.\n\n") +
+          chalk.gray("   See ") +
+          chalk.cyan.bold("README.md") +
+          chalk.gray(" on how to run and test your code locally.\n")
       );
+      return;
     }
 
     await streamLogs(commitHash);
   } catch (error) {
-    console.error(GENERIC_ERROR_MESSAGE + "\n\n" + "Error:", error);
+    console.error("\n" + GENERIC_ERROR_MESSAGE);
+    if (error instanceof Error) {
+      console.error(chalk.gray(`\nDetails: ${error.message}`));
+    }
     throw error;
   }
 }
