@@ -32,3 +32,15 @@ export async function hasCiWorkflow(git: SimpleGit): Promise<boolean> {
   ]);
   return tracked.trim().length > 0;
 }
+
+/**
+ * Returns true when there are working tree changes that touch workflow folders.
+ * This checks modified, created, deleted and renamed files in status.
+ */
+export async function hasWorkflowChanges(git: SimpleGit): Promise<boolean> {
+  const status = await git.status();
+  const changed = status.files.map((f) => f.path);
+  const touchesWorkflow = (p: string) =>
+    p.startsWith(".github/workflows/") || p.startsWith(".gitea/workflows/");
+  return changed.some(touchesWorkflow);
+}

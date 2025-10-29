@@ -4,7 +4,11 @@ import { Command } from "commander";
 import simpleGit, { SimpleGit } from "simple-git";
 import chalk from "chalk";
 import { createSpinner } from "nanospinner";
-import { checkRemoteIsCoderPass, hasCiWorkflow } from "./utils";
+import {
+  checkRemoteIsCoderPass,
+  hasCiWorkflow,
+  hasWorkflowChanges,
+} from "./utils";
 
 const program = new Command();
 
@@ -135,6 +139,17 @@ async function submit(options: any) {
         chalk.red(
           "CoderPass CLI should be run within a cloned challenge repository. \n\n" +
             "Go to https://practice.coderpass.io/challenges to start a new challenge."
+        )
+      );
+      return;
+    }
+
+    // Block if workflow files are being changed in this working tree
+    if (await hasWorkflowChanges(git)) {
+      console.error(
+        chalk.red(
+          "Submission blocked: changes to CI workflow files are not allowed.\n" +
+            "Please revert edits in .github/workflows and try again."
         )
       );
       return;
